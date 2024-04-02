@@ -167,9 +167,7 @@ class Trainer(BaseTrainer):
         params["actor_lr"] *= 32 / math.sqrt(1024 + epoch)
         params["critic_lr"] *= 32 / math.sqrt(1024 + epoch)
 
-        # loss coef is used to adjust the gradient magnitude
-        # so that lr = 1e-3 is good default
-        # params["loss_coef"] = 1 / self._game_count
+        # unused coef
         params["loss_coef"] = 1
 
         return params
