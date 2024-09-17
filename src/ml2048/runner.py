@@ -5,7 +5,7 @@ import torch
 from numba import njit
 
 from ml2048.event import EventEmitter
-from ml2048.game_numba import Game, VecGame, VecStepResult
+from ml2048.game_numba import VecGame, VecStepResult
 from ml2048.policy import Policy
 
 
@@ -115,89 +115,6 @@ class VecRunner:
     ):
         for _ in range(count):
             self.step_once(policy)
-
-
-class EpisodeRunner:
-    def __init__(
-        self,
-        max_invalid_actions: int,
-        invalid_penalty: float,
-    ):
-        self._max_invalid_actions = max_invalid_actions
-        self._invalid_penalty = invalid_penalty
-
-    def run_once(
-        self,
-        env: Game,
-        policy: Policy,
-        max_steps: int | None = None,
-    ) -> list[dict[str, Any]]:
-        rows = []
-        steps = 0
-
-        invalid_count = 0
-
-        while max_steps is None or steps < max_steps:
-            steps += 1
-
-            state = env._board.copy()
-            valid_actions = env._valid_actions.copy()
-
-            with torch.no_grad():
-                state_tensor = torch.from_numpy(state).to(torch.long)
-                valid_actions_tensor = torch.from_numpy(valid_actions).to(torch.bool)
-
-                action, logp = policy.sample_actions(state_tensor, valid_actions_tensor)
-
-            valid, completed, reward = env.step(action.item())
-
-            if not valid:
-                if self._max_invalid_actions == 0:
-                    raise RuntimeError("Invalid action is not allowed")
-
-                entry = {
-                    "state": state,
-                    "valid_actions": valid_actions,
-                    "action": action,
-                    "action_logp": logp,
-                    "reward": self._invalid_penalty,
-                }
-                rows.append(entry)
-
-                invalid_count += 1
-                if invalid_count >= self._max_invalid_actions:
-                    break
-
-                continue
-
-            invalid_count = 0
-
-            rows.append(
-                {
-                    "state": state,
-                    "valid_actions": valid_actions,
-                    "action": action,
-                    "action_logp": logp,
-                    "reward": reward,
-                }
-            )
-
-            if completed:
-                break
-
-        state = env._board.copy()
-        valid_actions = env._valid_actions.copy()
-
-        rows.append(
-            {
-                "state": state,
-                "valid_actions": valid_actions,
-                "action": 0,
-                "action_logp": 1.0e-10,
-                "reward": 0,
-            }
-        )
-        return rows
 
 
 @njit

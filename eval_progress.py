@@ -145,7 +145,6 @@ def _process_init(threads: int):
 
 
 def main():
-
     import multiprocessing.pool
 
     pool: multiprocessing.pool.Pool

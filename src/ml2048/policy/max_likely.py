@@ -6,6 +6,7 @@ from ml2048.policy import Policy, ProbabilisticPolicy
 class MaxLikelyPolicy(Policy):
     """
     Wrap a ProbabilisticPolicy and sample actions with the highest probabilities
+    It is also called greedy sampling.
     """
 
     def __init__(self, inner: ProbabilisticPolicy):

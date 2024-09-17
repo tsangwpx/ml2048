@@ -8,7 +8,7 @@ import numba
 import numpy as np
 from numba import njit
 
-from ml2048.game import STEP_DOWN, STEP_LEFT, STEP_RIGHT, STEP_UP, Board
+from ml2048.game import STEP_DOWN, STEP_LEFT, STEP_RIGHT, STEP_UP
 
 """
 +----+----+----+----+
@@ -43,43 +43,6 @@ ITEM_VALUES = np.array(
     ],
     dtype=np.int32,
 )
-
-
-@njit(inline="always")
-def _mirror(cells: Board):
-    # left-right flipping
-    for j in range(4):
-        s = j * 4
-
-        # swap cells in first and last column
-        cells[s], cells[s + 3] = cells[s + 3], cells[s]
-
-        # Swap cells in second and third column
-        cells[s + 1], cells[s + 2] = cells[s + 2], cells[s + 1]
-
-
-@njit(inline="always")
-def _transpose(cells: Board):
-    # transpose, swap along diagonal
-
-    # (i, j) in the strictly lower triangular part
-    for j in range(1, 4):
-        for i in range(0, j):
-            u = j * 4 + i
-            v = i * 4 + j
-            cells[u], cells[v] = cells[v], cells[u]
-
-
-@njit(inline="always")
-def _anti_transpose(cells: Board):
-    # anti-transpose, swap along anti-diagonal
-
-    # (i, j) in the top-left triangular part
-    for j in range(0, 3):
-        for i in range(0, 3 - j):
-            u = j * 4 + i
-            v = 15 - 4 * i - j  # v = (3 - i) * 4 + (3 - j)
-            cells[u], cells[v] = cells[v], cells[u]
 
 
 @njit(inline="always")
@@ -341,6 +304,14 @@ _ACTION_SHAPE = (4,)
 
 
 class Game:
+    """
+    2048 implementation in numba
+
+    Process a single game at a time.
+
+    This class is left for reference only. See VecGame for actual uses.
+    """
+
     _rand: np.random.Generator
 
     _completed: bool
@@ -548,221 +519,6 @@ class VecStepResult(TypedDict):
     prev_valid_actions: np.ndarray
 
 
-class _VecGameLegacy:
-    """Legacy implementation of VecGame"""
-
-    _RAND_SIZE: int = 1024
-
-    _rand: np.random.Generator
-
-    _state: np.ndarray
-    _valid_actions: np.ndarray
-    _merged: np.ndarray
-    _reward: np.ndarray
-    _terminated: np.ndarray
-    _invalid: np.ndarray
-
-    def __init__(
-        self,
-        size: int,
-        reward_fn: Callable[[np.ndarray, np.ndarray, np.ndarray], float] | None = None,
-        *,
-        two_prob: float = 0.8,
-        reuse_state: bool = False,
-    ):
-        if size <= 0:
-            raise ValueError(f"size={size}")
-
-        if reward_fn is None:
-            reward_fn = reward_fn_normal
-
-        self._size = size
-        self._two_prob = two_prob
-        self._reuse_state = reuse_state
-
-        self._reward_fn = reward_fn
-
-        self._state = np.empty((size,) + _BOARD_SHAPE, dtype=np.int8)
-        self._valid_actions = np.empty((size,) + _ACTION_SHAPE, np.bool_)
-        self._merged = np.empty((size, 16), dtype=np.int8)
-        self._step = np.empty((size,), dtype=np.int32)
-        self._reward = np.empty((size,), dtype=np.float32)
-        self._score = np.empty((size,), dtype=np.float32)
-        self._terminated = np.empty((size,), dtype=np.bool_)
-        self._invalid = np.empty((size,), dtype=np.bool_)
-
-        self._fresh_ids = set()
-
-        self._prev_state = np.empty_like(self._state)
-        self._prev_valid_actions = np.empty_like(self._valid_actions)
-
-        self._rand_step = 0
-        rand_shape = (self._RAND_SIZE,)
-        self._randperm = np.empty(rand_shape + _BOARD_SHAPE, dtype=np.uint8)
-        self._randbool = np.empty(rand_shape, dtype=np.bool_)
-        self._randfloat = np.empty(rand_shape, dtype=np.float32)
-
-        self.reset()
-
-    def observations(self) -> tuple[np.ndarray, np.ndarray]:
-        return self._state, self._valid_actions
-
-    def _reset_rand(self):
-        self._rand.permuted(self._randperm, axis=1, out=self._randperm)
-        self._rand.random(dtype=self._randfloat.dtype, out=self._randfloat)
-        np.less(self._randfloat, self._two_prob, out=self._randbool)
-
-    def summary(self) -> list[Any]:
-        maxcell = np.max(self._state, axis=1)
-        values, counts = np.unique(maxcell, return_counts=True)
-        total = counts.sum()
-
-        entries = [
-            (2 ** maximum.item(), count, count / total)
-            for maximum, count in zip(values, counts)
-        ]
-
-        entries.sort(key=lambda s: s[0], reverse=True)
-        return entries
-
-    def reset(self, seed: Optional[int] = None):
-        self._rand = np.random.default_rng(seed)
-
-        self._rand_step = 0
-        self._randperm[:, :] = np.arange(16).reshape((1, 16))
-        self._reset_rand()
-
-        self._state.fill(0)
-        self._valid_actions.fill(False)
-        self._step.fill(0)
-        self._merged.fill(0)
-        self._reward.fill(0)
-        self._score.fill(0)
-        self._terminated.fill(True)
-        self._invalid.fill(False)
-
-        self._prev_state.fill(0)
-        self._prev_valid_actions.fill(False)
-
-    def prepare(self) -> tuple[np.ndarray]:
-        """ "So that state and valid_actions are available"""
-
-        if self._rand_step >= self._RAND_SIZE:
-            self._rand_step = 0
-            self._reset_rand()
-
-        # prepare terminated game to a new game
-        indices = np.flatnonzero(self._terminated)
-
-        if indices.size == 0:
-            return (indices,)
-
-        sample_count = 0
-        if self._reuse_state:
-            reuse_indices = np.flatnonzero(~self._terminated)
-            self._rand.shuffle(reuse_indices)
-            sample_count = min(indices.size, reuse_indices.size) // 2
-            reuse_switches = self._rand.random((sample_count,), dtype=np.float32)
-        else:
-            reuse_indices = None
-            reuse_switches = None
-
-        for i in range(indices.size):
-            idx = indices[i]
-            copy_others = (
-                reuse_indices is not None
-                and i < sample_count
-                and reuse_switches[i] >= 0.5
-            )
-            if copy_others:
-                src_idx = reuse_indices[i]
-
-                self._step[idx] = self._step[src_idx]
-                self._score[idx] = self._score[src_idx]
-                self._state[idx, :] = self._state[src_idx, :]
-                self._valid_actions[idx, :] = self._valid_actions[src_idx, :]
-            else:
-                self._step[idx] = 0
-                self._score[idx] = 0
-
-                state = self._state[idx, :]
-                valid_actions = self._valid_actions[idx, :]
-
-                state.fill(0)
-
-                _spawn2(
-                    self._randperm,
-                    self._randfloat,
-                    self._rand_step + idx,
-                    state,
-                    self._two_prob,
-                    2,
-                )
-
-                _compute_valid_actions(state, valid_actions)
-
-        self._terminated.fill(False)
-        self._invalid.fill(False)
-        self._reward.fill(0)
-        self._merged.fill(0)
-
-        return (indices,)
-
-    def step(
-        self,
-        actions: np.ndarray,
-    ) -> VecStepResult:
-        assert actions.shape == (self._size,), actions.shape
-
-        np.copyto(self._prev_state, self._state)
-        np.copyto(self._prev_valid_actions, self._valid_actions)
-
-        tmp_state = np.empty(_BOARD_SHAPE, dtype=_BOARD_DTYPE)
-        # print(self._state.reshape((4, 4)))
-
-        for idx in range(self._size):
-            state = self._state[idx, :]
-            action = actions[idx]
-            valid_actions = self._valid_actions[idx, :]
-            merged = self._merged[idx, :]
-            prev_state = self._prev_state[idx, :]
-
-            if valid_actions[action]:
-                tranform = _ACTION_TRANSFORMATIONS[action]
-                tranform(state, self._merged[idx, :])
-                reward = self._reward_fn(state, prev_state, merged)
-                self._reward[idx] = reward
-
-                _spawn2(
-                    self._randperm,
-                    self._randfloat,
-                    self._rand_step + idx,
-                    state,
-                    self._two_prob,
-                    1,
-                )
-                # reuse tmp_state allocation for other purpose
-                has_valid_actions = _compute_valid_actions(state, valid_actions)
-                self._terminated[idx] = not has_valid_actions
-            else:
-                self._invalid[idx] = True
-
-        self._step += 1 - self._invalid
-        self._rand_step += 1
-
-        return {
-            "state": self._state,
-            "valid_actions": self._valid_actions,
-            "merged": self._merged,
-            "step": self._step,
-            "reward": self._reward,
-            "terminated": self._terminated,
-            "invalid": self._invalid,
-            "prev_state": self._prev_state,
-            "prev_valid_actions": self._valid_actions,
-        }
-
-
 class VecGame:
     """
     Vectorized 2048 environment
@@ -942,20 +698,6 @@ class VecGame:
         }
 
 
-@njit
-def _find_terminated(data: np.ndarray, out: np.ndarray) -> int:
-    count = 0
-    size = data.shape[0]
-    assert size <= out.size
-
-    for idx in range(size):
-        if data[idx]["terminated"]:
-            out[count] = idx
-            count += 1
-
-    return count
-
-
 @njit(parallel=True)
 def _vec_step(
     data: np.ndarray,
@@ -999,52 +741,6 @@ def _vec_step(
 class Summary(NamedTuple):
     maxcell: int
     score: int
-
-
-class Episode:
-    def __init__(self) -> None:
-        self._completed = False
-
-        self.states: list[np.ndarray] = []
-        self.actions: list[np.ndarray] = []
-        self.rewards: list[float] = []
-        self.extras: list[dict[str, Any] | None] = []
-        self.returns: np.ndarray | None = None
-
-        self._score: int = 0
-        self._summary: Summary | None = None
-
-    def total_score(self, index: int = -1) -> int:
-        state = self.states[index].astype(dtype=np.int32)
-        return (2**state).sum().item()
-
-    def append(
-        self,
-        state: np.ndarray,
-        action: np.ndarray,
-        reward: float,
-        extra: dict[str, Any] | None = None,
-    ):
-        self.states.append(state)
-        self.actions.append(action)
-        self.rewards.append(reward)
-        self.extras.append(extra)
-
-        if reward >= 0:
-            self._score += reward
-
-    def finish(self, state: np.ndarray):
-        self.states.append(state)
-
-    def summary(self) -> Summary:
-        state = self.states[-1]
-        max_power = state.max().item()
-        maxcell = 2**max_power if max_power else 0
-
-        return Summary(
-            maxcell=maxcell,
-            score=self._score,
-        )
 
 
 @njit

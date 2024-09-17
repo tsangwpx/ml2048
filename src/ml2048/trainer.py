@@ -11,7 +11,6 @@ import torch
 
 
 class BaseTrainer(metaclass=ABCMeta):
-
     def __init__(
         self,
         arguments: dict[str, Any],

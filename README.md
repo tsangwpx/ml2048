@@ -14,23 +14,28 @@ There is rare chance (&lt;0.1%?) to reach 16384 but the moves somehow seem surpr
 
 # Brief description
 
+The project trains an agent to play the famous game [2048][2048] with deep reinforcement learning.
+
+The model training is based on
 * Actor-Critic Algorithm
 * Proximal Policy Optimization
 * Generalized Advantage Estimation
 * Convolutional neural network frontend shared by actor and critic
-* Fine tuning over epoches
 * Performant vectorized environment
+* Fine-tuning hyperparameters over epochs
+
 
 See [visualization.ipynb](notebooks/visualization.ipynb) to run the trained agent.
 
-The environment, `VecGame`, is in [game_numba.py](src/ml2048/game_numba.py#L766).
-
-Start with [run_train3.py](run_train3.py) to look into the messy training code.
+Start with [run_train3.py](run_train3.py) to explore the ~~messy~~ training code:
+- [_network.py](src/ml2048/policy/_network.py) for the CNN network.
+- [actor_critic.py](src/ml2048/policy/actor_critic.py) the PPO implementation
+- [game_numba.py](src/ml2048/game_numba.py) the vectorized game environment, `VecGame`
 
 
 ## The network
 
-The 2048 board consists of a 4x4 grid
+The [2048][2048] game consists of a 4x4 grid
 and there are at least 16 possibilities in each cell (empty, 2, 4, 8, up to 131072).
 
 Here the board is one-hot encoded and fed into CNN.
@@ -50,7 +55,7 @@ They outputs 4 logits and 1 state value respectively.
 
 # Remarks
 
-00. The experience buffer is step-based instead of episode-based.
+01. The experience buffer is step-based instead of episode-based.
     There are `M` individual games and they are stepped `N` times in each epoch
     to obtain `MN` transitions.
     They are reset to the initial state when terminated.
@@ -59,7 +64,7 @@ They outputs 4 logits and 1 state value respectively.
     to stabilize policy update.
 
 00. Initially, 65536 transitions were fed into the network every epoch.
-    It took roughly 30 minutes to iterate 1k epoches on a recent mid-range machine with GPU.
+    It took roughly 30 minutes to iterate 1k epochs on a recent mid-range machine with GPU.
     Later, the number was doubled since the machine seemed unstressed. 😎
 
     The model was trained with at least 5B transitions,
@@ -125,3 +130,7 @@ They outputs 4 logits and 1 state value respectively.
 - Huang, et al., ["The 37 Implementation Details of Proximal Policy Optimization"](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/), ICLR Blog Track, 2022.
 - Guei, Hung. "On Reinforcement Learning for the Game of 2048." arXiv preprint arXiv:2212.11087 (2022).
 - Li, Shilun, and Veronica Peng. "Playing 2048 With Reinforcement Learning." arXiv preprint arXiv:2110.10374 (2021).
+- ["What is the optimal algorithm for the game 2048?"](https://stackoverflow.com/questions/22342854/what-is-the-optimal-algorithm-for-the-game-2048), 2014.
+
+[2048]: https://gabrielecirulli.github.io/2048/
+
